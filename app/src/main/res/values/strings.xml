@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">SaberBuilder</string>
+    <string name="back_button">Back</string>
 </resources>
