@@ -62,11 +62,11 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-data class SaberBuilderAppState (
+data class SaberBuilderAppState(
     val activeBLEDevice: BLEDevice?,
-        )
+)
 
-class SaberBuilderViewModel(context: Context): ViewModel() {
+class SaberBuilderViewModel(context: Context) : ViewModel() {
     private val _uiState = MutableStateFlow(SaberBuilderAppState(null))
     val uiState: StateFlow<SaberBuilderAppState> = _uiState.asStateFlow()
     val deviceListViewModel = DeviceListViewModel(context)
@@ -95,7 +95,7 @@ fun SaberBuilderApp(
                 navigateUp = { navController.navigateUp() }
             )
         }
-    ) {innerPadding ->
+    ) { innerPadding ->
         val uiState by viewModel.uiState.collectAsState()
         NavHost(
             navController = navController,
