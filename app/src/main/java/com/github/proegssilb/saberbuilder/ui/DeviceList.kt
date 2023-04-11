@@ -2,6 +2,7 @@ package com.github.proegssilb.saberbuilder.ui
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
@@ -10,6 +11,8 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -21,9 +24,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import coil.ImageLoader
 import coil.compose.rememberAsyncImagePainter
 import coil.decode.GifDecoder
@@ -34,6 +39,16 @@ import com.github.proegssilb.saberbuilder.BLEDevice
 import com.github.proegssilb.saberbuilder.R
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
+import kotlinx.coroutines.*
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import com.welie.blessed.BluetoothCentralManager
+import com.welie.blessed.BluetoothPeripheral
+import com.welie.blessed.PhyOptions
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 
 
 @OptIn(ExperimentalPermissionsApi::class)
@@ -45,16 +60,44 @@ fun DeviceListScreen(
 ) {
     val context = LocalContext.current
 
-    val permissionState = rememberMultiplePermissionsState(permissions = viewModel.permissionsNeeded)
+    // val permissionState = rememberMultiplePermissionsState(permissions = viewModel.permissionsNeeded)
+
+    var permissionGranted = remember {
+        viewModel.checkScanPermission(context)
+    }
+
+    LaunchedEffect(permissionGranted) {
+        if (permissionGranted) {
+            viewModel.startScanning(context)
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.RequestMultiplePermissions()) {
+        Log.d("DeviceListScreen", "Got callback. ${it.entries.joinToString { "${it.key}:${it.value}" }}")
+        for (p in it.entries) {
+            if (!p.value) {
+                val shouldAsk = ActivityCompat.shouldShowRequestPermissionRationale(context as Activity, p.key)
+                Log.d("DeviceListScreen", "Should ask again: ${p.key}, $shouldAsk")
+            }
+        }
+        permissionGranted = viewModel.checkScanPermission(context)
+    }
 
     Column(modifier = modifier
         .fillMaxSize()
         .wrapContentHeight(Alignment.CenterVertically)
     ) {
-        if (!permissionState.allPermissionsGranted) {
-            PermissionPrompt(viewModel.missingPermissions) { permissionState.launchMultiplePermissionRequest() }
+        // if (!permissionState.allPermissionsGranted) {
+        //    PermissionPrompt(viewModel.missingPermissions) { permissionState.launchMultiplePermissionRequest() }
+        if (!permissionGranted) {
+            PermissionPrompt(viewModel.missingPermissions) {
+                permissionLauncher.launch(viewModel.missingPermissions.toTypedArray())
+            }
         } else if (viewModel.devices.any()) {
-            DeviceList(devices = viewModel.devices.values.toList(), onDevicePicked)
+            DeviceList(devices = viewModel.devices.values.sortedBy { it.ble_address }.toList()) {
+                viewModel.stopScanning(context)
+                onDevicePicked(it)
+            }
         } else {
             DeviceListPlaceholder(viewModel.scanning) { viewModel.startScanning(context)}
         }
@@ -62,22 +105,21 @@ fun DeviceListScreen(
 }
 
 // TODO: Make this class comply with SRP.
-class DeviceListViewModel(_context: Context) : ViewModel(), DefaultLifecycleObserver {
+class DeviceListViewModel(_context: Context) : ViewModel() {
     // BLE Scanning Code
-    var scanning by mutableStateOf(false)
     private val _missingPerms = mutableStateListOf<String>()
     val missingPermissions: List<String>
         get() = _missingPerms
     private val _devices = mutableStateMapOf<String, BLEDevice>()
     val devices: Map<String, BLEDevice>
         get() = _devices
+    private val centralManager = BluetoothCentralManager(_context)
 
-    private val scanCallbackHandle = MyScanCallback()
-    private val bluetoothManager: BluetoothManager? = _context.getSystemService(BluetoothManager::class.java)
-    private val bluetoothLeScanner = bluetoothManager?.adapter?.bluetoothLeScanner
+    val scanning: Boolean
+        get() = centralManager.isScanning
 
     val permissionsNeeded = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+        listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
     } else {
         listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.BLUETOOTH, Manifest.permission.BLUETOOTH_ADMIN)
     }
@@ -108,64 +150,32 @@ class DeviceListViewModel(_context: Context) : ViewModel(), DefaultLifecycleObse
     @SuppressLint("MissingPermission", "Lint doesn't know that `assertScanPermissions` does check for permissions.")
     fun startScanning(context: Context) {
         assertScanPermissions(context)
-        if (!scanning) { // Stops scanning after a pre-defined scan period.
-            Log.i("BLEScanner", "Starting scan")
-            bluetoothLeScanner?.startScan(scanCallbackHandle)
-            scanning = true
+
+        for(peripheral in centralManager.getConnectedPeripherals()) {
+            handleScanResult(peripheral, null)
+        }
+
+        centralManager.scanForPeripherals(::handleScanResult) {}
+    }
+
+    private fun handleScanResult(peripheral: BluetoothPeripheral, _res: ScanResult?) {
+        Log.d("DeviceList", "Callback for peripheral: ${peripheral.address}, $peripheral")
+        try {
+            val device = BLEDevice(peripheral.name, "", peripheral.address, peripheral)
+
+            if (!_devices.contains(device.ble_address)) {
+                _devices[device.ble_address] = device
+            }
+        } catch (se: SecurityException) {
+            // We can't process any results.
+            return
         }
     }
 
     @SuppressLint("MissingPermission", "Lint doesn't know that `assertScanPermissions` does check for permissions.")
     fun stopScanning(context: Context) {
-        assertScanPermissions(context)
-        Log.i("BLEScanner", "Stopping scan")
-        scanning = false
-        bluetoothLeScanner?.stopScan(scanCallbackHandle)
-    }
-
-    private inner class MyScanCallback : ScanCallback() {
-        // TODO: Handle scan failure
-
-        override fun onScanResult(callbackType: Int, result: ScanResult?) {
-            processResult(result)
-        }
-
-        override fun onBatchScanResults(results: MutableList<ScanResult>?) {
-            if (results == null) { return }
-            for (result in results) {
-                processResult(result)
-            }
-        }
-
-        fun processResult(result: ScanResult?) {
-            if (result == null) { return }
-            try {
-                val device = BLEDevice(result.device.name ?: "(unnamed)", "", result.device.address)
-
-                if (!devices.contains(device.ble_address)) {
-                    _devices[device.ble_address] = device
-                }
-            } catch (se: SecurityException) {
-                // We can't process any results.
-                return
-            }
-        }
-    }
-
-    // Lifecycle Code
-
-    override fun onStart(owner: LifecycleOwner) {
-        super.onStart(owner)
-        if (owner is ComponentActivity) {
-            startScanning(owner)
-        }
-    }
-
-    override fun onStop(owner: LifecycleOwner) {
-        super.onStop(owner)
-        if (owner is ComponentActivity) {
-            stopScanning(owner)
-        }
+        Log.d("DeviceList", "Scan stopping.")
+        centralManager.stopScan()
     }
 }
 

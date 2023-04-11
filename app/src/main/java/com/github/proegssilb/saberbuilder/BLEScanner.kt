@@ -11,10 +11,6 @@ import android.os.Build
 import android.os.Handler
 import android.util.Log
 
-const val REQUEST_ENABLE_BT = 15500
-
-data class BLEDevice(val name: String, val manufacturer: String, val ble_address: String)
-
 /**
  * Manages the verbs associated with scanning.
  *

@@ -1,6 +1,7 @@
 package com.github.proegssilb.saberbuilder
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -21,8 +22,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.github.proegssilb.saberbuilder.ui.DeviceListScreen
-import com.github.proegssilb.saberbuilder.ui.DeviceListViewModel
 import com.github.proegssilb.saberbuilder.ui.theme.SaberBuilderTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -35,7 +34,9 @@ import androidx.compose.material.Scaffold
 import androidx.compose.material.Text
 import androidx.compose.material.TopAppBar
 import androidx.compose.runtime.getValue
-import com.github.proegssilb.saberbuilder.ui.ModuleList
+import androidx.compose.ui.platform.LocalContext
+import com.github.proegssilb.saberbuilder.ui.*
+import kotlinx.coroutines.flow.update
 
 
 class MainActivity : ComponentActivity() {
@@ -46,7 +47,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         viewModel = SaberBuilderViewModel(this)
-        this.lifecycle.addObserver(viewModel.deviceListViewModel)
 
         setContent {
             SaberBuilderTheme {
@@ -72,7 +72,9 @@ class SaberBuilderViewModel(context: Context) : ViewModel() {
     val deviceListViewModel = DeviceListViewModel(context)
 
     fun setActiveBleDevice(bleDevice: BLEDevice) {
-        _uiState.value = SaberBuilderAppState(bleDevice)
+        _uiState.update { state -> state.copy(
+            activeBLEDevice = bleDevice
+        ) }
     }
 }
 
@@ -82,6 +84,7 @@ fun SaberBuilderApp(
     viewModel: SaberBuilderViewModel = viewModel(),
     navController: NavHostController = rememberNavController()
 ) {
+    val context = LocalContext.current
     val backStackEntry by navController.currentBackStackEntryAsState()
     // Get the name of the current screen
     val currentScreen = CurrentScreen.valueOf(
@@ -106,12 +109,14 @@ fun SaberBuilderApp(
             composable(route = CurrentScreen.DeviceList.name) {
                 DeviceListScreen(viewModel = viewModel.deviceListViewModel) {
                     viewModel.setActiveBleDevice(it)
+                    viewModel.deviceListViewModel.stopScanning(context)
                     navController.navigate(CurrentScreen.ModuleList.name)
                 }
             }
 
             composable(route = CurrentScreen.ModuleList.name) {
-                ModuleList(listOf(), {})
+                assert(uiState.activeBLEDevice != null)
+                ModuleListScreen(uiState.activeBLEDevice) {}
             }
 
             composable(route = CurrentScreen.ModuleConfig.name) {
