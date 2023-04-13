@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.annotation.StringRes
@@ -116,7 +117,7 @@ fun SaberBuilderApp(
 
             composable(route = CurrentScreen.ModuleList.name) {
                 assert(uiState.activeBLEDevice != null)
-                ModuleListScreen(uiState.activeBLEDevice) {}
+                ModuleListScreen(uiState.activeBLEDevice) { Log.i("SaberBuilderApp", "Module selected: $it")}
             }
 
             composable(route = CurrentScreen.ModuleConfig.name) {

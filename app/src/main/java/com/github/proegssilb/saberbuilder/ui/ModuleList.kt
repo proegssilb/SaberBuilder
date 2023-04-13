@@ -93,9 +93,10 @@ class ModuleListViewModel() : ViewModel() {
                 // Build the module list, but note that we might have timed out.
                 val services = peripheral.services
                 if (services.any()) {
-                    val modsList = services.map(::serviceToMod)
-                    Log.d("ModuleListViewModel", "Found modules: ${modsList.joinToString { it.name }}")
-                    _uiState.update { it.copy(modules = modsList, displayModules = modsList.map(::saberModToDisplayable) ) }
+                    val modsList = services.filter(::isServiceASaberModule).map(::serviceToMod)
+                    Log.d("ModuleListViewModel", "Found modules: ${modsList.joinToString { "${it.name} (${it.address})" }}")
+                    _uiState.update { it.copy(modules = modsList, displayModules = modsList
+                        .map(::saberModToDisplayable) ) }
                 } else {
                     Log.w("ModuleListViewModel", "Could not find modules on device: ${bleDevice.name} (${bleDevice.ble_address})")
                 }
@@ -107,8 +108,19 @@ class ModuleListViewModel() : ViewModel() {
     private val nameMap = mapOf (
         UUID.fromString("7d0a7103-7699-494e-b638-deadbeef0000") to "Blade LED",
         UUID.fromString("7d0a309f-7699-494e-b638-deadbeef0000") to "Mixer Service",
-        UUID.fromString("7d0a00b1-7699-494e-b638-deadbeef0000") to "On/Off LED Button",
+        UUID.fromString("7d0a00b1-7699-494e-b638-deadbeef0000") to "I2C On/Off LED Button",
+        UUID.fromString("7d0a00b2-7699-494e-b638-deadbeef0000") to "Raw On/Off LED Button",
+        UUID.fromString("adaf0001-4369-7263-7569-74507974686e") to "Adafruit Information Service"
     )
+
+    private fun isServiceASaberModule(service: BluetoothGattService): Boolean {
+        val minServiceId = 0x7d0a00007699494e
+        val maxServiceId = 0x7d0aFFFF7699494e
+        val id = service.uuid
+        val bits = id.mostSignificantBits
+        Log.d("ModuleListViewModel", "Filtering service: $id, ${java.lang.Long.toHexString(bits)}")
+        return bits in minServiceId..maxServiceId
+    }
 
     private fun serviceToMod(service: BluetoothGattService): SaberModule {
         val serviceId = service.uuid
@@ -212,7 +224,6 @@ fun ModuleList(
         modifier = modifier.fillMaxSize()
     ) {
         ModuleListBackground()
-        Text("Kilroy was here", modifier, Color.White)
         LazyColumn(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
